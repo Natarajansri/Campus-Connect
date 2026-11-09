@@ -1,0 +1,33 @@
+{
+  "id": "/index.html",
+  "name": "Campus Connect - Lost & Found",
+  "short_name": "Campus Connect",
+  "description": "Campus-wide lost and found network with secure claims, chat and verified item handover.",
+  "start_url": "/index.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#FAF7F0",
+  "theme_color": "#8B6F47",
+  "categories": ["education", "utilities"],
+  "icons": [
+    {
+      "src": "/assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+<meta name="theme-color" content="#8B6F47">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Campus Connect">
+<title>Campus Connect — Lost &amp; Found Portal</title>
+<meta name="description" content="Campus-wide lost and found network with dedicated Student, Faculty/Staff, and Admin access control.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Firebase SDKs (Compat for Vanilla JS) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<!-- firebase-storage-compat removed: photos stored as base64 in Firestore -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-check-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-messaging-compat.js"></script>
+<script src="firebase-config.js?v=live10"></script>
+<script src="firebase-service.js?v=live10"></script>
+
+<link rel="stylesheet" href="assets/css/styles.css?v=live10">
+</head>
+<body>
+
+<!-- Auth loading overlay — visible until Firebase Auth settles -->
+<div id="authLoadingOverlay" aria-live="polite" aria-label="Loading…">
+  <div class="auth-spinner-wrap">
+    <div class="auth-spinner"></div>
+    <p class="auth-spinner-label">Loading Campus Connect…</p>
+  </div>
+</div>
+
+<!-- Connectivity + install prompts (bound with addEventListener in app.js) -->
+<div class="offline-banner" id="offlineBanner" role="status" aria-live="polite" hidden>
+  <span>📴 You are offline. Reports can be queued on this device.</span>
+  <span id="offlineQueueCount"></span>
+</div>
+<div class="install-banner" id="installBanner" hidden>
+  <span id="installBannerText">Install Campus Connect for quick access and notifications.</span>
+  <span class="install-banner-actions">
+    <button type="button" class="btn-mini" id="installBannerBtn">Install</button>
+    <button type="button" class="btn-mini ghost" id="dismissInstallBtn">Not now</button>
+  </span>
+</div>
+
+<!-- ================= Header ================= -->
+<header>
+  <div class="brand-area">
+    <a href="#" class="brand" onclick="switchMainView('board'); return false;">
+      <span>📌</span>
+      <span class="display">Campus Connect</span>
+    </a>
+
+    <!-- Firebase Cloud Status Badge -->
+    <div class="firebase-badge" title="Live Cloud Sync: campusconnect-bc130">
+      <span class="firebase-dot"></span>
+      <span class="firebase-text-full">🔥 Firebase: campusconnect-bc130</span>
+      <span class="firebase-text-short">🔥 Live</span>
+    </div>
+  </div>
+
+  <!-- View Switcher -->
+  <div class="view-tabs" id="viewSwitcher">
+    <button type="button" class="view-tab-btn active" id="tabBoard" onclick="switchMainView('board')">
+      <span>📌 Public Board</span>
+    </button>
+    <button type="button" class="view-tab-btn" id="tabDash" onclick="switchMainView('dashboard')">
+      <span>📊 Dashboard</span>
+    </button>
+  </div>
+
+  <div class="header-actions">
+    <!-- Report Button -->
+    <button type="button" class="btn btn-report-item" onclick="openReportModal()">
+      <span>+ Report Item</span>
+    </button>
+
+    <!-- Notifications Button -->
+    <button type="button" class="btn-notif" onclick="openNotificationsModal()" title="View notifications">
+      <span>🔔</span>
+      <span class="notif-badge" id="notifBadge">0</span>
+    </button>
+
+    <!-- Auth / Profile Area -->
+    <div id="authNav"></div>
+  </div>
+</header>
+
+<!-- Dynamic Admin Moderation Banner -->
+<div id="adminBanner"></div>
+
+<!-- Dynamic Campus Broadcast Banner -->
+<div id="campusBroadcastArea"></div>
+
+<!-- ================= VIEW 1: PUBLIC BOARD ================= -->
+<main class="board-view" id="boardView">
+  <section class="hero">
+    <h1>Left something behind?<br>Someone on campus probably found it.</h1>
+    <p>Official university lost &amp; found network. Report missing items, verify turned-in property with campus departments, and submit secure claims.</p>
+    
+    <div class="search-row">
+      <div class="search-box">
+        🔍 <input id="searchInput" placeholder="Search by item name, location, department, or keywords..." oninput="renderBoard()">
+      </div>
+
+      <select id="categoryFilter" class="category-filter-select" onchange="renderBoard()">
+        <option value="all">All Categories</option>
+      </select>
+    </div>
+
+    <div class="filters" id="filters">
+      <button class="filter-btn active" data-filter="all" onclick="setBoardFilter('all')">All Items</button>
+      <button class="filter-btn" data-filter="lost" onclick="setBoardFilter('lost')">Lost</button>
+      <button class="filter-btn" data-filter="found" onclick="setBoardFilter('found')">Found</button>
+      <button class="filter-btn" data-filter="custody" onclick="setBoardFilter('custody')">🏛️ Staff Custody</button>
+      <button class="filter-btn" data-filter="claimed" onclick="setBoardFilter('claimed')">Claimed / Returned</button>
+    </div>
+  </section>
+
+  <section class="board" id="boardGrid"></section>
+</main>
+
+<!-- ================= VIEW 2: ROLE-BASED DASHBOARD ================= -->
+<main class="dashboard-view" id="dashboardView">
+  <div class="dashboard-layout">
+    
+    <!-- Sidebar Navigation (Populated dynamically by role) -->
+    <aside class="dashboard-sidebar">
+      <div class="dash-user-card" id="dashUserCard"></div>
+      <ul class="dash-nav" id="dashNav"></ul>
+    </aside>
+
+    <!-- Main Dashboard Panel -->
+    <section class="dashboard-main" id="dashMainPanel"></section>
+  </div>
+</main>
+
+<footer>
+  Campus Connect · University Lost &amp; Found Management System · Built with HTML, CSS, JavaScript (Ready for Firebase)
+</footer>
+
+<!-- Mobile Floating Action Button (Thumb-accessible for reporting items) -->
+<button type="button" class="mobile-fab" id="mobileFab" onclick="openReportModal()" aria-label="Report Missing or Found Item">
+  <span class="mobile-fab-icon">+</span>
+  <span class="mobile-fab-label">Report Item</span>
+</button>
+
+<!-- ================= Modals ================= -->
+
+<!-- 1. Item Detail Modal -->
+<div class="overlay" id="detailOverlay" onclick="closeDetail(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeDetail()">✕</button>
+    <div id="detailContent"></div>
+  </div>
+</div>
+
+<!-- 2. Report Lost / Found Item Modal (with Photo Upload) -->
+<div class="overlay" id="reportOverlay" onclick="closeReportModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeReportModal()">✕</button>
+    <h2 class="display">Report an Item</h2>
+    
+    <div class="status-toggle" id="statusToggle">
+      <button type="button" class="lost-active" id="btnTypeLost" onclick="setReportType('lost')">I lost this</button>
+      <button type="button" class="found-inactive" id="btnTypeFound" onclick="setReportType('found')">I found this</button>
+    </div>
+
+    <form id="reportForm" onsubmit="return handleReportSubmit(event)">
+      <label for="repTitle">Item Name</label>
+      <input id="repTitle" placeholder="e.g. Blue hydro flask, Student ID, HP Laptop" required>
+
+      <label for="repCategory">Category</label>
+      <select id="repCategory" required></select>
+
+      <label id="repLocationLabel" for="repLocation">Where was it lost?</label>
+      <input id="repLocation" placeholder="e.g. Library 2nd floor, Cafeteria Table 4" required>
+
+      <label for="repDesc">Description &amp; Identifying Details</label>
+      <textarea id="repDesc" rows="3" placeholder="Color, brand, keychains, stickers, distinguishing marks..."></textarea>
+
+      <!-- Photo Upload -->
+      <label>Item Photo (Optional)</label>
+      <div class="photo-upload-box" onclick="document.getElementById('repPhotoFile').click()">
+        <span>📷 Click to select item picture</span>
+        <input type="file" id="repPhotoFile" accept="image/*" style="display: none;" onchange="handlePhotoUpload(this)">
+      </div>
+      <div class="photo-preview-wrap" id="photoPreviewWrap">
+        <img id="photoPreviewImg" src="" alt="Preview">
+      </div>
+
+      <!-- Faculty Department Custody Section (Shown if user is Faculty) -->
+      <div id="repFacultyCustody" style="display: none; margin-top: 14px; padding: 12px; background: #FAF5EB; border: 1px dashed var(--cork); border-radius: 4px;">
+        <label style="margin: 0 0 8px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; color: var(--ink);">
+          <input type="checkbox" id="repStaffCustodyCheck" checked style="width: 16px; height: 16px; accent-color: var(--cork);">
+          <span>🎓 <strong>Held in Official Department Custody</strong></span>
+        </label>
+        <div style="margin-top: 8px;">
+          <label style="font-size: 11px; margin-top: 4px;">Pickup Office / Department Room</label>
+          <input id="repCustodyOffice" placeholder="e.g. Science Library Front Desk, Level 1">
+          <label style="font-size: 11px; margin-top: 4px;">Pickup Hours &amp; Instructions</label>
+          <input id="repCustodyHours" placeholder="e.g. Mon-Fri 9AM-4PM. Bring student ID.">
+        </div>
+      </div>
+
+      <label for="repContact">Your Contact Email or Phone</label>
+      <input id="repContact" placeholder="you@campus.edu" required>
+
+      <button type="submit" class="submit-btn">📌 Submit to Board</button>
+    </form>
+  </div>
+</div>
+
+<!-- 3. Claim Request Modal (Student provides private proof) -->
+<div class="overlay" id="claimOverlay" onclick="closeClaimModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeClaimModal()">✕</button>
+    <h2 class="display">Submit Claim Request</h2>
+    <p style="font-size: 13px; color: var(--muted); margin: 6px 0 16px;">
+      To prevent false claims, provide private identifying proof only the real owner would know.
+    </p>
+
+    <form id="claimForm" onsubmit="return handleClaimSubmit(event)">
+      <input type="hidden" id="claimItemId">
+      
+      <div style="background: #F8F3E8; padding: 10px 12px; border-radius: 4px; margin-bottom: 14px; font-size: 13px;">
+        Claiming: <strong id="claimItemTitleDisplay"></strong>
+      </div>
+
+      <label for="claimProof">Private Proof of Ownership</label>
+      <textarea id="claimProof" rows="4" placeholder="e.g. Wallpaper on phone, engraving on the back, exact scratch on corner, contents inside the bag, student ID registration number..." required></textarea>
+
+      <label for="claimContact">Your Contact Information</label>
+      <input id="claimContact" placeholder="Your student email or phone" required>
+
+      <button type="submit" class="submit-btn" style="background: var(--custody); border-color: var(--custody);">
+        📨 Send Secure Claim Request
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- 4. Review Claim Modal (Faculty / Admin confirms ownership) -->
+<div class="overlay" id="reviewClaimOverlay" onclick="closeReviewClaimModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeReviewClaimModal()">✕</button>
+    <h2 class="display">Review Claim Request</h2>
+    <div id="reviewClaimContent" style="margin-top: 14px;"></div>
+  </div>
+</div>
+
+<!-- 5. Admin Edit Post Modal -->
+<div class="overlay" id="adminEditOverlay" onclick="closeAdminEditModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeAdminEditModal()">✕</button>
+    <h2 class="display">🛡️ Admin: Edit Report</h2>
+    <form id="adminEditForm" onsubmit="return handleAdminEditSubmit(event)">
+      <input type="hidden" id="aEditId">
+      <label>Item Name</label>
+      <input id="aEditTitle" required>
+      <label>Category</label>
+      <select id="aEditCategory" required></select>
+      <label>Location</label>
+      <input id="aEditLocation" required>
+      <label>Details</label>
+      <textarea id="aEditDesc" rows="3"></textarea>
+      <label>Status</label>
+      <select id="aEditStatus">
+        <option value="pending">Pending Verification</option>
+        <option value="approved">Approved</option>
+        <option value="claimed">Claimed</option>
+        <option value="returned">Returned</option>
+        <option value="rejected">Rejected</option>
+      </select>
+      <label>Contact Info</label>
+      <input id="aEditContact" required>
+      <button type="submit" class="submit-btn">💾 Save Admin Updates</button>
+    </form>
+  </div>
+</div>
+
+<!-- 6. Notifications Modal -->
+<div class="overlay" id="notifOverlay" onclick="closeNotificationsModal(event)">
+  <div class="modal notif-modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeNotificationsModal()">✕</button>
+    <div class="notif-modal-head">
+      <h2 class="display" style="margin-bottom: 12px;">🔔 Notifications</h2>
+      <button type="button" class="btn-mini" id="markAllNotifsBtn">Mark all read</button>
+    </div>
+    <div id="notifListContainer"></div>
+  </div>
+</div>
+
+<!-- 7. Admin Broadcast Modal -->
+<div class="overlay" id="broadcastOverlay" onclick="closeBroadcastModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeBroadcastModal()">✕</button>
+    <h2 class="display">📢 Publish Campus Notice</h2>
+    <form onsubmit="return handleBroadcastSubmit(event)">
+      <label>Announcement Headline</label>
+      <textarea id="broadcastInputText" rows="3" placeholder="Urgent campus notice..." required></textarea>
+      <div style="display: flex; gap: 8px; margin-top: 16px;">
+        <button type="submit" class="submit-btn" style="margin: 0; flex: 1;">📢 Publish</button>
+        <button type="button" class="btn-action-danger" onclick="clearBroadcastNotice()">Clear</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 8. Add Category Modal -->
+<div class="overlay" id="categoryOverlay" onclick="closeCategoryModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeCategoryModal()">✕</button>
+    <h2 class="display">🏷️ Add Item Category</h2>
+    <form onsubmit="return handleAddCategorySubmit(event)">
+      <label>Category Name</label>
+      <input id="newCategoryInput" placeholder="e.g. Water Bottles, Calculators" required>
+      <button type="submit" class="submit-btn">Add Category</button>
+    </form>
+  </div>
+</div>
+
+<!-- 9. Student Edit Own Report Modal -->
+<div class="overlay" id="studentEditOverlay" onclick="closeStudentEditModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeStudentEditModal()">✕</button>
+    <h2 class="display">✏️ Edit My Report</h2>
+    <p style="font-size: 13px; color: var(--muted); margin: 6px 0 14px;">Update details for your reported item.</p>
+    <form id="studentEditForm" onsubmit="return handleStudentEditSubmit(event)">
+      <input type="hidden" id="sEditId">
+      <label for="sEditTitle">Item Name</label>
+      <input id="sEditTitle" required>
+      <label for="sEditCategory">Category</label>
+      <select id="sEditCategory" required></select>
+      <label for="sEditLocation">Where was it lost/found?</label>
+      <input id="sEditLocation" required>
+      <label for="sEditDesc">Description &amp; Identifying Details</label>
+      <textarea id="sEditDesc" rows="3"></textarea>
+      <label for="sEditContact">Your Contact Information</label>
+      <input id="sEditContact" required>
+      <button type="submit" class="submit-btn">💾 Update My Report</button>
+    </form>
+  </div>
+</div>
+
+<!-- 10. File Student Complaint / Dispute Modal -->
+<div class="overlay" id="complaintOverlay" onclick="closeComplaintModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeComplaintModal()">✕</button>
+    <h2 class="display">⚠️ Submit Student Inquiry / Dispute</h2>
+    <p style="font-size: 13px; color: var(--muted); margin: 6px 0 14px;">Report a disputed ownership claim or ask for campus security assistance.</p>
+    <form onsubmit="return handleComplaintSubmit(event)">
+      <label for="compSubject">Subject / Item Involved</label>
+      <input id="compSubject" placeholder="e.g. Disputed ownership claim for Student ID card" required>
+      <label for="compCategory">Issue Type</label>
+      <select id="compCategory">
+        <option value="Disputed Claim">Disputed Ownership Claim</option>
+        <option value="Turn-In Issue">Item Handed to Wrong Department</option>
+        <option value="Urgent Valuables">Urgent Missing Item (Passport / Keys / Laptop)</option>
+        <option value="General Support">General Lost &amp; Found Inquiry</option>
+      </select>
+      <label for="compMessage">Details</label>
+      <textarea id="compMessage" rows="3" placeholder="Provide relevant details, dates, and what happened..." required></textarea>
+      <button type="submit" class="submit-btn">📨 Submit to Campus Administration</button>
+    </form>
+  </div>
+</div>
+
+<!-- 11. Admin Assign Role / Add User Modal -->
+<div class="overlay" id="adminUserModal" onclick="closeAdminUserModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeAdminUserModal()">✕</button>
+    <h2 class="display" id="adminUserModalTitle">👤 Manage User Account</h2>
+    <form onsubmit="return handleAdminUserSubmit(event)">
+      <input type="hidden" id="aUserId">
+      <label for="aUserName">Full Name</label>
+      <input id="aUserName" required>
+      <label for="aUserEmail">College Email (@campus.edu)</label>
+      <input id="aUserEmail" type="email" required>
+      <label for="aUserRole">Assign Role</label>
+      <select id="aUserRole">
+        <option value="student">Student</option>
+        <option value="faculty">Faculty / Staff</option>
+        <option value="admin">Campus Admin</option>
+      </select>
+      <label for="aUserStatus">Account Status</label>
+      <select id="aUserStatus">
+        <option value="Active">Active</option>
+        <option value="Suspended">Suspended</option>
+      </select>
+      <button type="submit" class="submit-btn">💾 Save User Account</button>
+    </form>
+  </div>
+</div>
+
+<!-- 12. Admin Send System Notification Modal -->
+<div class="overlay" id="adminSendNotifModal" onclick="closeAdminSendNotifModal(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="closeAdminSendNotifModal()">✕</button>
+    <h2 class="display">🔔 Dispatch Campus Notification</h2>
+    <form onsubmit="return handleAdminSendNotifSubmit(event)">
+      <label for="notifRecipient">Recipient Audience</label>
+      <select id="notifRecipient">
+        <option value="all">📢 All Campus Members (Broadcast)</option>
+        <option value="student">🎓 All Students</option>
+        <option value="faculty">🏛️ All Faculty &amp; Staff</option>
+      </select>
+      <label for="notifMessageInput">Notification Message</label>
+      <textarea id="notifMessageInput" rows="3" placeholder="e.g. End of semester reminder: Unclaimed items at Main Security will be donated on Dec 15th." required></textarea>
+      <button type="submit" class="submit-btn">🚀 Dispatch Notification</button>
+    </form>
+  </div>
+</div>
+
+<!-- 13. Claimant QR handover / staff scan result -->
+<div class="overlay" id="handoverOverlay">
+  <div class="modal handover-modal" role="dialog" aria-modal="true" aria-labelledby="handoverTitle">
+    <button class="modal-close" id="handoverCloseBtn" type="button" aria-label="Close">✕</button>
+    <div id="handoverContent"></div>
+  </div>
+</div>
+
+<div class="toast" id="toastMessage">Action completed</div>
+
+<!-- Vendored, self-hosted QR helpers (no CDN) -->
+<script src="assets/vendor/qrcode.js"></script>
+<script src="assets/vendor/jsQR.js"></script>
+
+<!-- ================= Complete Client Logic ================= -->
+<script src="assets/js/app.js?v=live10"></script>
+</body>
+</html>

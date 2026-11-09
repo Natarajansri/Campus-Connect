@@ -1,0 +1,17 @@
+{
+  "name": "campusconnect-functions",
+  "description": "Privileged server-side checks for Campus Connect",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "lint": "node --check index.js && node --check helpers.js && node --check auth.js && node --check admin.js && node --check triggers.js && node --check notifications.js && node --check email.js && node --check chat.js && node --check handover.js && node --check scheduler.js",
+    "serve": "firebase emulators:start --only functions,firestore,auth,storage"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^5.1.1"
+  }
+}

@@ -1,0 +1,62 @@
+rules_version = '2';
+
+/**
+ * Campus Connect — Cloud Storage Security Rules
+ *
+ * Only re-encoded JPEG/PNG/WebP photos uploaded by the signed-in, verified
+ * owner may live under items/{uid}/{fileName}. The client compresses and strips
+ * EXIF/GPS metadata before upload (see public/firebase-service.js), but these
+ * rules are the authoritative size/type/ownership check because a browser can
+ * always be modified.
+ *
+ * Read access is limited to verified signed-in campus members so board images
+ * cannot be fetched anonymously. A download URL is still a bearer-style secret:
+ * anyone who obtains a URL while authenticated can fetch that object.
+ */
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedInVerified() {
+      return request.auth != null
+        && request.auth.token.get('email_verified', false) == true
+        && request.auth.token.get('suspended', false) != true;
+    }
+
+    function admin() {
+      return signedInVerified() && request.auth.token.get('role', 'student') == 'admin';
+    }
+
+    function validImageUpload() {
+      return request.resource.size > 0
+        && request.resource.size <= 3 * 1024 * 1024
+        && request.resource.contentType in [
+          'image/jpeg',
+          'image/png',
+          'image/webp'
+        ];
+    }
+
+    match /items/{uid}/{fileName} {
+      // Board photos are visible to any verified campus member.
+      allow read: if signedInVerified();
+
+      // Owners may upload only their own folder, only validated images, and only
+      // with a bounded, extension-checked file name.
+      allow write: if signedInVerified()
+        && request.auth.uid == uid
+        && validImageUpload()
+        && fileName.matches('^[A-Za-z0-9._-]{1,120}$')
+        && fileName.matches('.*\\.(jpg|jpeg|png|webp)$');
+
+      // Owners can remove their own photo; admins can remove any photo during
+      // moderation/account deletion.
+      allow delete: if signedInVerified()
+        && (request.auth.uid == uid || admin());
+    }
+
+    // Default deny: nothing outside the item-photo folder may be written or read.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

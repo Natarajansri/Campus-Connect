@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover">
+<meta name="theme-color" content="#8B6F47">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Campus Connect — College Domain Login</title>
+<meta name="description" content="Sign in to Campus Connect Lost &amp; Found bulletin board with your college domain credentials.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Firebase SDKs (Compat for Vanilla JS) -->
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-functions-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-check-compat.js"></script>
+<script src="firebase-config.js?v=live10"></script>
+<script src="firebase-service.js?v=live10"></script>
+
+<link rel="stylesheet" href="assets/css/login.css?v=live10">
+</head>
+<body>
+
+<header>
+  <a href="index.html" class="brand-link" id="brandHeader">
+    <span>📌</span>
+    <span class="display">Campus Connect</span>
+  </a>
+  <a href="index.html" class="back-btn" id="btnBackToBoard">
+    <span>← Back to Board</span>
+  </a>
+</header>
+
+<main class="auth-wrapper">
+  <div class="auth-card-container">
+    
+    <!-- Left Showcase Panel -->
+    <div class="auth-showcase">
+      <div>
+        <span class="showcase-tag">Campus Community</span>
+        <h1 class="showcase-title display">Find what you lost. Return what you found.</h1>
+        <p class="showcase-desc">
+          Join your university's shared lost &amp; found network. Connect directly with fellow students and campus staff to retrieve valuable items quickly.
+        </p>
+
+        <ul class="features-list">
+          <li class="feature-item">
+            <span class="feature-icon">⚡</span>
+            <span><strong>Instant Pinning:</strong> Post lost or found cards with campus location tags in seconds.</span>
+          </li>
+          <li class="feature-item">
+            <span class="feature-icon">🛡️</span>
+            <span><strong>Verified Campus ID:</strong> Keep peer-to-peer claims secure and transparent.</span>
+          </li>
+          <li class="feature-item">
+            <span class="feature-icon">📬</span>
+            <span><strong>Direct Contact:</strong> Receive secure claims right to your student email.</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Sample Visual Card -->
+      <div class="sample-pin-card">
+        <span class="sample-pin-tag">Found · Just Now</span>
+        <div class="sample-pin-title">Student ID Card (Computer Science)</div>
+        <div class="sample-pin-meta">📍 Science Library, Table 4B</div>
+      </div>
+    </div>
+
+    <!-- Right Form Panel -->
+    <div class="auth-form-side">
+      
+      <!-- Institutional College Header -->
+      <div class="auth-heading">
+        <div class="domain-badge">
+          <span>🏛️</span>
+          <span>College Domain Network · Institutional Access</span>
+        </div>
+        <h2 class="auth-title display">Sign In to Campus Connect</h2>
+        <p class="auth-subtitle">
+          Sign in using your authorized college credentials or institutional Google Workspace account.
+        </p>
+      </div>
+
+      <!-- Domain Policy Information Box -->
+      <div class="domain-info-card">
+        <span style="font-size: 16px; line-height: 1;">🔒</span>
+        <div>
+          <strong>College Domain Notice:</strong> Self-registration is disabled because this is a dedicated college domain. Accounts are pre-provisioned for all enrolled students, faculty, and administrative staff.
+        </div>
+      </div>
+
+      <!-- Alert Box -->
+      <div id="authAlert" class="alert-box" role="alert"></div>
+
+      <!-- ================= LOGIN FORM ================= -->
+      <section id="loginSection" class="form-section active">
+        <form id="loginForm" onsubmit="handleLogin(event)" novalidate>
+          <div class="form-group">
+            <label for="loginEmail">College Email Address</label>
+            <div class="input-wrapper">
+              <input 
+                type="email" 
+                id="loginEmail" 
+                placeholder="yourname@campus.edu" 
+                required 
+                autocomplete="email"
+              >
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="loginPassword">Password</label>
+            <div class="input-wrapper">
+              <input 
+                type="password" 
+                id="loginPassword" 
+                placeholder="Enter your password" 
+                required 
+                autocomplete="current-password"
+              >
+              <button 
+                type="button" 
+                class="toggle-password" 
+                onclick="togglePasswordVisibility('loginPassword', this)" 
+                aria-label="Toggle password visibility"
+              >
+                👁️
+              </button>
+            </div>
+          </div>
+
+          <div class="form-options">
+            <label class="remember-me">
+              <input type="checkbox" id="rememberMe">
+              <span>Remember me</span>
+            </label>
+            <a href="#" class="forgot-link" onclick="handleForgotPassword(); return false;">
+              Forgot password?
+            </a>
+          </div>
+
+          <button type="submit" class="auth-submit-btn" id="btnSubmitLogin">
+            <span>Sign In to Campus Board</span>
+            <span>→</span>
+          </button>
+        </form>
+
+        <div class="divider">or continue with</div>
+
+        <button type="button" class="sso-btn" id="btnGoogleSso" onclick="handleGoogleSignIn()">
+          <svg class="sso-logo" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3h3.86c2.26-2.09 3.68-5.17 3.68-9.09z"/>
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.37 24 12 24z"/>
+            <path fill="#FBBC05" d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.98-3.09z"/>
+            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.37 0 3.26 2.7 1.29 6.62l3.98 3.09c.95-2.85 3.6-4.96 6.73-4.96z"/>
+          </svg>
+          <span>Sign In with College Google Workspace</span>
+        </button>
+
+        <!--
+          SECURITY: Demo credentials and the old browser-side account
+          provisioner were removed. Accounts are created by campus IT through
+          the admin-only inviteUser Cloud Function (or the Firebase Console).
+          Never embed passwords in client code.
+        -->
+        <div class="domain-info-card" style="margin-top: 20px; margin-bottom: 0;">
+          <span style="font-size: 16px; line-height: 1;">🔐</span>
+          <div>
+            <strong>Protected access:</strong> a verified college email and an active campus account are required. Contact campus IT if you need an account or role change.
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</main>
+
+<footer>
+  Campus Connect · Built with HTML, CSS, &amp; JavaScript · Ready for Firebase Authentication
+</footer>
+
+<div class="toast" id="toastMessage">Logged in successfully!</div>
+
+<script src="assets/js/login.js?v=live10"></script>
+</body>
+</html>

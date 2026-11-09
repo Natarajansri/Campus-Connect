@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Firebase / emulator local state
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+storage-debug.log
+pubsub-debug.log
+emulator-data/
+*.log
+
+# Local environment / secrets — never commit service accounts or .env files
+.env
+.env.*
+!.env.example
+.secret.local
+service-account*.json
+*-service-account.json
+.firebaserc.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Coverage / test output
+coverage/
+test-results/

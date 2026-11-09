@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+frontend/functions/node_modules/
+
+# Firebase / emulator local state
+.firebase/
+frontend/.firebase/
+*.log
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+storage-debug.log
+pubsub-debug.log
+emulator-data/
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+.secret.local
+service-account*.json
+*-service-account.json
+.firebaserc.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Coverage / test output
+coverage/
+test-results/

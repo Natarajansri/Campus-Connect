@@ -1,0 +1,29 @@
+{
+  "name": "campusconnect-security-hardening",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Campus Connect Lost & Found portal with Firebase Security Rules, Cloud Functions and emulator tests.",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24.12.0"
+  },
+  "scripts": {
+    "lint": "node --check public/firebase-config.js && node --check public/firebase-service.js && node --check public/sw.js && node --check public/firebase-messaging-sw.js && node --check public/assets/js/login.js && node --check public/assets/js/app.js && node --check functions/index.js && node --check functions/helpers.js && node --check functions/auth.js && node --check functions/admin.js && node --check functions/triggers.js && node --check functions/notifications.js && node --check functions/email.js && node --check functions/chat.js && node --check functions/handover.js && node --check functions/scheduler.js && node --check scripts/make-admin.js && node --check scripts/backfill-claims.js && node --check scripts/migrate-ids.js && node --check scripts/generate-pwa-icons.js && node --check tests/rules/security.rules.test.js && node --check tests/functions/level2.functions.test.js",
+    "test": "npm run test:rules && npm run test:functions",
+    "test:rules": "firebase emulators:exec --only firestore,storage --project demo-campusconnect \"node tests/rules/security.rules.test.js\"",
+    "test:functions": "firebase emulators:exec --config firebase.functions-test.json --only firestore --project demo-campusconnect \"node tests/functions/level2.functions.test.js\"",
+    "start": "node scripts/serve-static.js",
+    "serve:static": "node scripts/serve-static.js",
+    "serve": "firebase emulators:start",
+    "deploy": "firebase deploy",
+    "init:backend": "node scripts/init-backend.js",
+    "make-admin": "node scripts/make-admin.js",
+    "backfill-claims": "node scripts/backfill-claims.js",
+    "migrate-ids": "node scripts/migrate-ids.js"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.2.0",
+    "firebase-admin": "^14.5.0"
+  }
+}

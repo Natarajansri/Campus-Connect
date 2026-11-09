@@ -1,0 +1,509 @@
+rules_version = '2';
+
+/**
+ * Campus Connect — Firestore Security Rules
+ *
+ * Authoritative role source: request.auth.token.role (custom claim).
+ * Nothing in the users document can grant elevated access by itself.
+ *
+ * Status values are lowercase: pending | approved | claimed | returned | rejected
+ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ----------------------------- helpers ----------------------------- */
+    function signedIn() {
+      return request.auth != null;
+    }
+    function verified() {
+      return signedIn()
+        && request.auth.token.get('email_verified', false) == true
+        // Suspended accounts receive this claim from the setUserStatus callable.
+        // Auth is also disabled + refresh tokens revoked server-side. Use get()
+        // because reading a missing token key directly is a rules error.
+        && request.auth.token.get('suspended', false) != true;
+    }
+    function role() {
+      // Custom claim takes precedence; fallback to Firestore users doc for Spark free plan
+      return request.auth.token.get('role',
+        exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'student')
+          : 'student'
+      );
+    }
+    function staff() {
+      return verified() && (role() == 'faculty' || role() == 'admin');
+    }
+    function admin() {
+      return verified() && role() == 'admin';
+    }
+    function ownerOf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    function changedOnly(allowed) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
+    }
+    function itemExists(itemId) {
+      return exists(/databases/$(database)/documents/items/$(itemId));
+    }
+    function itemAfter(itemId) {
+      return getAfter(/databases/$(database)/documents/items/$(itemId)).data;
+    }
+    function itemBefore(itemId) {
+      return get(/databases/$(database)/documents/items/$(itemId)).data;
+    }
+    function claimAfter(claimId) {
+      return getAfter(/databases/$(database)/documents/claims/$(claimId)).data;
+    }
+    function claimBefore(claimId) {
+      return get(/databases/$(database)/documents/claims/$(claimId)).data;
+    }
+    function isString(value, maxLen) {
+      return value is string && value.size() <= maxLen;
+    }
+    // Document IDs are used to build rule paths. Reject slashes and other
+    // unexpected characters before calling exists()/get().
+    function isSafeId(value) {
+      return value is string && value.matches('^[A-Za-z0-9_-]{1,128}$');
+    }
+    // Client audit entries must match the caller's real token role. Accounts
+    // without a role claim are treated as students (same as the UI/service).
+    function clientActorRole() {
+      return request.auth.token.get('role', 'student');
+    }
+    function isUrlPath(value) {
+      return value is string
+        && value.size() <= 300
+        && value.matches('^/[^/].*$');
+    }
+    // Preferences are a fixed boolean map. A client can never smuggle a role,
+    // prompt or unknown field through the settings object.
+    function validPrefs(value) {
+      return value is map
+        && value.keys().hasOnly([
+          'pushEnabled', 'emailEnabled', 'claimStatus', 'matchFound',
+          'chatMessage', 'custodyUpdate', 'broadcast', 'weeklyDigest'
+        ])
+        && (!value.keys().hasAny(['pushEnabled']) || value.pushEnabled is bool)
+        && (!value.keys().hasAny(['emailEnabled']) || value.emailEnabled is bool)
+        && (!value.keys().hasAny(['claimStatus']) || value.claimStatus is bool)
+        && (!value.keys().hasAny(['matchFound']) || value.matchFound is bool)
+        && (!value.keys().hasAny(['chatMessage']) || value.chatMessage is bool)
+        && (!value.keys().hasAny(['custodyUpdate']) || value.custodyUpdate is bool)
+        && (!value.keys().hasAny(['broadcast']) || value.broadcast is bool)
+        && (!value.keys().hasAny(['weeklyDigest']) || value.weeklyDigest is bool);
+    }
+    function chatExists(chatId) {
+      return exists(/databases/$(database)/documents/chats/$(chatId));
+    }
+    function chatBefore(chatId) {
+      return get(/databases/$(database)/documents/chats/$(chatId)).data;
+    }
+    function isChatParticipant(chatId) {
+      return verified()
+        && chatExists(chatId)
+        && (chatBefore(chatId).claimantUid == request.auth.uid
+            || chatBefore(chatId).reporterUid == request.auth.uid);
+    }
+
+    /* ------------------------------ users ------------------------------ */
+    match /users/{uid} {
+      // A user may read their own profile or pre-registered email entry; admins may read the directory.
+      allow read: if verified() && (
+        ownerOf(uid)
+        || admin()
+        || resource.data.email == request.auth.token.get('email', '')
+      );
+
+      // Admins may directly create user profiles (students, faculty) in Firestore.
+      // Verified users may link their own pre-registered profile to their uid.
+      allow create: if (admin()
+            && request.resource.data.role in ['student', 'faculty', 'admin']
+            && request.resource.data.status in ['Active', 'Suspended']
+            && isString(request.resource.data.name, 80)
+            && isString(request.resource.data.email, 160))
+        || (verified()
+            && ownerOf(uid)
+            && request.resource.data.uid == uid
+            && request.resource.data.status == 'Active'
+            && request.resource.data.email == request.auth.token.get('email', '')
+            && isString(request.resource.data.name, 80)
+            && request.resource.data.name.size() >= 1
+            && isString(request.resource.data.email, 160));
+
+      // Admins may update any user profile (role, status, name, department).
+      // Regular users may edit only their own display name/department/prefs.
+      allow update: if admin()
+        || (verified()
+            && ownerOf(uid)
+            && changedOnly(['name', 'department', 'updatedAt', 'prefs', 'uid', 'id', 'role', 'status', 'email'])
+            && request.resource.data.email == resource.data.email
+            && isString(request.resource.data.name, 80)
+            && request.resource.data.name.size() >= 1
+            && isString(request.resource.data.department, 80)
+            && (!request.resource.data.keys().hasAny(['prefs'])
+                || validPrefs(request.resource.data.prefs)));
+
+      // Admins may delete user profiles. A user may clean up their old pre-registered record when migrating to uid.
+      allow delete: if admin() || (verified() && resource.data.email == request.auth.token.get('email', ''));
+
+      // FCM registration tokens belong to one account. Only that account may
+      // read/write them; no other member or staff member can enumerate tokens.
+      match /devices/{deviceId} {
+        allow read: if verified() && ownerOf(uid);
+
+        allow create: if verified()
+          && ownerOf(uid)
+          && request.resource.data.keys().hasAll([
+            'token', 'platform', 'enabled', 'createdAt', 'updatedAt'
+          ])
+          && request.resource.data.keys().hasOnly([
+            'token', 'platform', 'enabled', 'createdAt', 'updatedAt',
+            'userAgent', 'lastSeenAt'
+          ])
+          && isString(request.resource.data.token, 4096)
+          && request.resource.data.token.size() >= 20
+          && request.resource.data.platform in ['web', 'android', 'ios']
+          && request.resource.data.enabled is bool
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && (!request.resource.data.keys().hasAny(['userAgent'])
+              || isString(request.resource.data.userAgent, 300))
+          && (!request.resource.data.keys().hasAny(['lastSeenAt'])
+              || request.resource.data.lastSeenAt == request.time);
+
+        allow update: if verified()
+          && ownerOf(uid)
+          && request.resource.data.keys().hasOnly([
+            'token', 'platform', 'enabled', 'createdAt', 'updatedAt',
+            'userAgent', 'lastSeenAt'
+          ])
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && isString(request.resource.data.token, 4096)
+          && request.resource.data.token.size() >= 20
+          && request.resource.data.platform in ['web', 'android', 'ios']
+          && request.resource.data.enabled is bool
+          && (!request.resource.data.keys().hasAny(['userAgent'])
+              || isString(request.resource.data.userAgent, 300))
+          && (!request.resource.data.keys().hasAny(['lastSeenAt'])
+              || request.resource.data.lastSeenAt == request.time);
+
+        allow delete: if verified() && ownerOf(uid);
+      }
+    }
+
+    /* ------------------------------ items ------------------------------ */
+    match /items/{itemId} {
+      // Approved/claimed/returned items are publicly readable on the bulletin board.
+      // Unapproved items can only be read by their owner or staff.
+      allow read: if resource.data.status in ['approved', 'claimed', 'returned']
+        || (verified() && (ownerOf(resource.data.reporterUid) || staff()));
+
+      // createItem always writes status 'pending' first. Staff approval is a
+      // separate update, so this rule stays simple and non-bypassable.
+      allow create: if verified()
+        && request.resource.data.keys().hasAll([
+          'type', 'title', 'category', 'location', 'desc', 'image',
+          'reporterUid', 'reporterName', 'status', 'isCustody', 'isPinned',
+          'isStaffVerified', 'createdAt', 'updatedAt', 'updatedBy'
+        ])
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.type in ['lost', 'found']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.isCustody is bool
+        && request.resource.data.isPinned is bool
+        && request.resource.data.isStaffVerified is bool
+        && request.resource.data.isPinned == false
+        && request.resource.data.isStaffVerified == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && isString(request.resource.data.title, 100)
+        && request.resource.data.title.size() >= 1
+        && isString(request.resource.data.category, 80)
+        && request.resource.data.category.size() >= 1
+        && isString(request.resource.data.location, 160)
+        && isString(request.resource.data.desc, 1000)
+        // image is a base64 data URL stored directly in Firestore (no Storage).
+        // 400 KB JPEG ≈ 533 k base64 chars; we cap at 600 000 to be safe.
+        && isString(request.resource.data.image, 600000)
+        && isString(request.resource.data.reporterName, 80)
+        && request.resource.data.reporterName.size() >= 1
+        && isString(request.resource.data.custodyLocation, 160)
+        && isString(request.resource.data.custodyHours, 160)
+        && isString(request.resource.data.custodyNotes, 300);
+
+      // Staff/admin may moderate any item but can never reassign ownership or
+      // rewrite the creation timestamp.
+      allow update: if staff()
+        && request.resource.data.reporterUid == resource.data.reporterUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.status in ['pending', 'approved', 'claimed', 'returned', 'rejected'];
+
+      // Owners may edit descriptive fields and mark their own item returned /
+      // reopened. They cannot pin, verify, change custody or change ownership.
+      // Crucially, they cannot move a pending report to approved: only faculty/
+      // admin moderation may publish it.
+      allow update: if verified()
+        && ownerOf(resource.data.reporterUid)
+        && changedOnly(['title', 'category', 'location', 'desc', 'status', 'updatedAt', 'updatedBy'])
+        && request.resource.data.updatedBy == request.auth.uid
+        && (
+          request.resource.data.status == resource.data.status
+          || (request.resource.data.status == 'returned'
+              && resource.data.status in ['approved', 'claimed'])
+          || (request.resource.data.status == 'approved'
+              && resource.data.status == 'returned')
+        )
+        && request.resource.data.status in ['pending', 'approved', 'returned']
+        && request.resource.data.reporterUid == resource.data.reporterUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && isString(request.resource.data.title, 100)
+        && request.resource.data.title.size() >= 1
+        && isString(request.resource.data.category, 80)
+        && request.resource.data.category.size() >= 1
+        && isString(request.resource.data.location, 160)
+        && isString(request.resource.data.desc, 1000);
+
+      allow delete: if verified() && (ownerOf(resource.data.reporterUid) || admin());
+
+      // Private contact document: never publicly readable.
+      match /private/{docId} {
+        allow read: if verified()
+          && docId == 'contact'
+          && itemExists(itemId)
+          && (itemBefore(itemId).reporterUid == request.auth.uid || staff());
+
+        // On create the parent item may be written in the same batch, so use
+        // getAfter() to see the not-yet-committed item.
+        allow create: if verified()
+          && docId == 'contact'
+          && itemAfter(itemId).reporterUid == request.resource.data.reporterUid
+          && (request.resource.data.reporterUid == request.auth.uid || staff())
+          && isString(request.resource.data.contact, 160);
+
+        // The reporter's UID is immutable; only the contact text can change.
+        allow update: if verified()
+          && docId == 'contact'
+          && (itemBefore(itemId).reporterUid == request.auth.uid || staff())
+          && changedOnly(['contact', 'updatedAt'])
+          && request.resource.data.reporterUid == resource.data.reporterUid
+          && isString(request.resource.data.contact, 160);
+
+        allow delete: if verified()
+          && docId == 'contact'
+          && (itemBefore(itemId).reporterUid == request.auth.uid || admin());
+      }
+    }
+
+    /* ------------------------------ claims ----------------------------- */
+    match /claims/{claimId} {
+      allow read: if verified() && (ownerOf(resource.data.claimantUid) || staff());
+
+      allow create: if verified()
+        && request.resource.data.keys().hasAll([
+          'itemId', 'itemTitle', 'claimantUid', 'claimantName',
+          'claimantEmail', 'status', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.claimantUid == request.auth.uid
+        && request.resource.data.claimantEmail == request.auth.token.get('email', '')
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && isString(request.resource.data.itemId, 128)
+        && isSafeId(request.resource.data.itemId)
+        // Claims may target only an existing, publicly approved item that the
+        // claimant does not own. This blocks claims on hidden pending reports
+        // and self-claims.
+        && exists(/databases/$(database)/documents/items/$(request.resource.data.itemId))
+        && itemBefore(request.resource.data.itemId).status == 'approved'
+        && itemBefore(request.resource.data.itemId).reporterUid != request.auth.uid
+        && isString(request.resource.data.itemTitle, 100)
+        && isString(request.resource.data.claimantName, 80)
+        && request.resource.data.claimantName.size() >= 1
+        && isString(request.resource.data.claimantEmail, 160);
+
+      // Only staff can resolve a pending claim.
+      allow update: if staff()
+        && resource.data.status == 'pending'
+        && changedOnly(['status', 'reviewedBy', 'reviewedAt', 'updatedAt'])
+        && request.resource.data.status in ['approved', 'rejected']
+        && request.resource.data.reviewedBy == request.auth.uid
+        && request.resource.data.reviewedAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if admin();
+
+      // Private ownership proof. Created atomically with the parent claim.
+      match /private/{docId} {
+        allow read: if verified()
+          && docId == 'proof'
+          && (claimBefore(claimId).claimantUid == request.auth.uid || staff());
+
+        allow create: if verified()
+          && docId == 'proof'
+          && claimAfter(claimId).claimantUid == request.auth.uid
+          && claimAfter(claimId).status == 'pending'
+          && request.resource.data.claimantUid == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && isString(request.resource.data.proofDetails, 1000)
+          && request.resource.data.proofDetails.size() >= 1
+          && isString(request.resource.data.contact, 160);
+
+        // Proof is immutable after submission; admins may remove it only as
+        // part of an account/data deletion run.
+        allow update: if false;
+        allow delete: if admin();
+      }
+    }
+
+    /* --------------------------- notifications ------------------------- */
+    match /notifications/{notifId} {
+      allow read: if verified() && ownerOf(resource.data.toUid);
+
+      // Users may notify themselves; staff may notify the reporter/claimant of
+      // a moderation result. The Cloud Function path uses the Admin SDK.
+      allow create: if verified()
+        && (request.resource.data.toUid == request.auth.uid || staff())
+        && request.resource.data.read == false
+        && isString(request.resource.data.toUid, 128)
+        && isString(request.resource.data.text, 500)
+        && request.resource.data.text.size() >= 1
+        && (!request.resource.data.keys().hasAny(['event'])
+            || isString(request.resource.data.event, 40))
+        && (!request.resource.data.keys().hasAny(['url'])
+            || isUrlPath(request.resource.data.url))
+        && request.resource.data.createdAt == request.time;
+
+      // Recipients can only flip the read flag.
+      allow update: if verified()
+        && ownerOf(resource.data.toUid)
+        && changedOnly(['read'])
+        && request.resource.data.read == true;
+
+      allow delete: if verified() && ownerOf(resource.data.toUid);
+    }
+
+    /* ---------------------------- complaints --------------------------- */
+    match /complaints/{complaintId} {
+      allow read: if verified() && (ownerOf(resource.data.reporterUid) || staff());
+
+      allow create: if verified()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.studentEmail == request.auth.token.get('email', '')
+        && request.resource.data.status == 'Under Review'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && isString(request.resource.data.studentName, 80)
+        && isString(request.resource.data.subject, 120)
+        && request.resource.data.subject.size() >= 1
+        && isString(request.resource.data.type, 60)
+        && isString(request.resource.data.message, 1000)
+        && request.resource.data.message.size() >= 1;
+
+      allow update: if staff()
+        && changedOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['Under Review', 'Investigating', 'Resolved'];
+
+      allow delete: if admin();
+    }
+
+    /* ------------------------------- chats ----------------------------- */
+    // Chats are created only by Cloud Functions after claim approval. Clients
+    // may read their own chat and write a read marker; message writes go
+    // through the sendChatMessage callable (rate limit + suspension checks).
+    match /chats/{chatId} {
+      allow read: if verified()
+        && chatExists(chatId)
+        && (isChatParticipant(chatId) || staff());
+
+      allow create, update, delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if verified()
+          && chatExists(chatId)
+          && (isChatParticipant(chatId) || staff());
+        allow create, update, delete: if false;
+      }
+
+      match /reads/{uid} {
+        allow read: if verified() && (request.auth.uid == uid || staff());
+        allow create, update: if verified()
+          && request.auth.uid == uid
+          && isChatParticipant(chatId)
+          && request.resource.data.keys().hasOnly(['lastReadAt', 'updatedAt'])
+          && request.resource.data.lastReadAt == request.time
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if false;
+      }
+    }
+
+    /* ----------------------------- moderation -------------------------- */
+    match /moderation/{reportId} {
+      allow read: if verified()
+        && (staff() || resource.data.reportedBy == request.auth.uid);
+      allow create, delete: if false;
+      allow update: if staff()
+        && changedOnly(['status', 'reviewedBy', 'reviewedAt', 'updatedAt'])
+        && request.resource.data.status in ['open', 'reviewed', 'dismissed']
+        && request.resource.data.reviewedBy == request.auth.uid
+        && request.resource.data.reviewedAt == request.time
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    /* ------------------------------ receipts --------------------------- */
+    // Written only by verifyHandover. The claimant/reporter (and staff) can
+    // read their own digital return receipt; nobody can forge one.
+    match /receipts/{claimId} {
+      allow read: if verified()
+        && (staff()
+            || resource.data.claimantUid == request.auth.uid
+            || resource.data.reporterUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    /* --------------------- server-only bookkeeping --------------------- */
+    // Rate limits, email quota and email failures are written with the Admin
+    // SDK. Denying client access keeps counters and failure detail private.
+    match /rateLimits/{docId} {
+      allow read, write: if false;
+    }
+    match /emailUsage/{docId} {
+      allow read, write: if false;
+    }
+    match /emailFailures/{docId} {
+      allow read: if admin();
+      allow write: if false;
+    }
+
+    /* ------------------------------ metadata --------------------------- */
+    match /metadata/{docId} {
+      // Categories and campus broadcast banner are public info.
+      allow read: if true;
+      allow write: if admin();
+    }
+
+    /* -------------------------------- logs ----------------------------- */
+    match /logs/{logId} {
+      allow read: if admin();
+
+      // Append-only client audit trail. Cloud Functions write the authoritative
+      // trail with the Admin SDK (bypassing these rules).
+      allow create: if verified()
+        && request.resource.data.actorUid == request.auth.uid
+        && request.resource.data.actorRole == clientActorRole()
+        && request.resource.data.source == 'client'
+        && request.resource.data.createdAt == request.time
+        && isString(request.resource.data.action, 80)
+        && isString(request.resource.data.targetType, 40)
+        && isString(request.resource.data.targetId, 120)
+        && isString(request.resource.data.details, 300)
+        && isString(request.resource.data.text, 500)
+        && request.resource.data.text.size() >= 1;
+
+      allow update, delete: if false;
+    }
+  }
+}
